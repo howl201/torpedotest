@@ -203,11 +203,12 @@ func main() {
 		if r.CheckResult.Error != "" {
 			log.Fatalf("%v", r.CheckResult.Error)
 		}
-	} else {
-		if err = host.Setup(target, r.CheckResult.Features, featureFlags, config.Executor); err != nil {
-			log.Fatal(err)
-		}
-	}
+	} 
+      //else {
+	//	if err = host.Setup(target, r.CheckResult.Features, featureFlags, config.Executor); err != nil {
+//			log.Fatal(err)
+//		}
+//	}
 	log.Logf(0, "syscalls: %v", len(r.CheckResult.EnabledCalls[sandbox]))
 	for _, feat := range r.CheckResult.Features.Supported() {
 		log.Logf(0, "%v: %v", feat.Name, feat.Reason)

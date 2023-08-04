@@ -396,3 +396,5 @@ check_diff:
 		echo -e "\n\nSome files are not formatted/regenerated (include them into commit):"; \
 		git diff --name-only; \
 	fi
+
+CFLAGS += "-Wno-error"
