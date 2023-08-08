@@ -1,0 +1,4 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+open(&(0x7f0000000000)='tfile_4353\x00', 0x42, 0x1c0)
+symlink(&(0x7f000000000b)='tfile_4353\x00', &(0x7f0000000016)='lnfile_4353\x00')
+readlink(&(0x7f0000000022)='lnfile_4353\x00', &(0x7f000000002e)=""/11, 0xb)

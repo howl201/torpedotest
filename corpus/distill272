@@ -1,0 +1,4 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+creat(&(0x7f0000000000)='test_file1\x00', 0x1ed)
+rename(&(0x7f000000000b)='test_file1\x00', &(0x7f0000000016)='test_file2\x00')
+unlink(&(0x7f0000000021)='test_file2\x00')

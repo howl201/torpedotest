@@ -1,0 +1,5 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+r0 = open(&(0x7f0000000000)='/sys/kernel/mm/hugepages\x00', 0x90800, 0x0)
+close(r0)
+r1 = open(&(0x7f0000000019)='/sys/kernel/mm/hugepages/hugepages-2048kB/free_hugepages\x00', 0x0, 0x0)
+read(r1, &(0x7f0000000052)=""/3, 0x3)

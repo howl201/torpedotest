@@ -1,0 +1,8 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+r0 = open(&(0x7f0000000000)='mkdirattestfile\x00', 0x42, 0x180)
+mkdir(&(0x7f0000000010)='mkdirattestdir4441_0\x00', 0x1c0)
+r1 = open(&(0x7f0000000025)='mkdirattestdir4441_0\x00', 0x10000, 0x0)
+mkdirat(r1, &(0x7f000000003a)='mkdiratrelpath4441_0\x00', 0x180)
+mkdirat(r1, &(0x7f000000004f)='/tmp/mkdFV7ToT/mkdiratrelpath4441_0_2\x00', 0x180)
+mkdirat(0xffffffffffffff9c, &(0x7f0000000075)='mkdiratrelpath4441_0\x00', 0x180)
+mkdirat(r0, &(0x7f000000008a)='mkdiratrelpath4441_0\x00', 0x180)

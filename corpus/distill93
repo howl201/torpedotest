@@ -1,0 +1,8 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+open(&(0x7f0000000000)='/etc/ld.so.cache\x00', 0x80000, 0x0)
+open(&(0x7f0000000011)='/lib/x86_64-linux-gnu/libc.so.6\x00', 0x80000, 0x0)
+mkdir(&(0x7f0000000031)='./tdir_5004\x00', 0x1f8)
+stat(&(0x7f000000003d)='./tdir_5004\x00', &(0x7f0000000049))
+mkdir(&(0x7f000000008d)='./rndir_5004\x00', 0x1f8)
+stat(&(0x7f000000009a)='./rndir_5004\x00', &(0x7f00000000a7))
+rename(&(0x7f00000000eb)='./tdir_5004\x00', &(0x7f00000000f7)='./rndir_5004\x00')

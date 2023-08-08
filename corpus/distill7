@@ -1,0 +1,6 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+creat(&(0x7f0000000000)='getxattr01testfile\x00', 0x1a4)
+setxattr(&(0x7f0000000013)='getxattr01testfile\x00', &(0x7f0000000026)=@known='user.testkey\x00', &(0x7f0000000033)='this is a test value\x00', 0x15, 0x1)
+getxattr(&(0x7f0000000048)='getxattr01testfile\x00', &(0x7f000000005b)=@known='user.nosuchkey\x00', &(0x7f000000006a), 0x0)
+getxattr(&(0x7f000000006a)='getxattr01testfile\x00', &(0x7f000000007d)=@known='user.testkey\x00', &(0x7f000000008a), 0x0)
+getxattr(&(0x7f000000008a)='getxattr01testfile\x00', &(0x7f000000009d)=@known='user.testkey\x00', &(0x7f00000000aa)=""/21, 0x15)

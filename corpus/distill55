@@ -1,0 +1,6 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+open(&(0x7f0000000000)='/lib/x86_64-linux-gnu/libc.so.6\x00', 0x80000, 0x0)
+r0 = inotify_init()
+mkdir(&(0x7f0000000020)='test_dir\x00', 0x1c0)
+inotify_add_watch(r0, &(0x7f0000000029)='test_dir\x00', 0xfff)
+rmdir(&(0x7f0000000032)='test_dir\x00')
