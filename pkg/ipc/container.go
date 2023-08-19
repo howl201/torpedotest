@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const (
+const (//관련 변수들
 	image           = "syzkaller-image"
 	idleImage       = "idle-amd64"
 	timeout         = 10 * time.Second
@@ -23,7 +23,7 @@ const (
 )
 
 // make a command that invokes the executor directly without using the wrapper
-func MakeExecutorCommand(bin []string) *exec.Cmd {
+func MakeExecutorCommand(bin []string) *exec.Cmd {//실제로 docker command를 만드는 과정
 	dockerArgs := strings.Split(dockerArgString, " ")
 
 	//change entrypoint to executor, append image, then remaining args
@@ -31,7 +31,7 @@ func MakeExecutorCommand(bin []string) *exec.Cmd {
 	dockerArgs = append(dockerArgs, bin[0], image)
 	dockerArgs = append(dockerArgs, bin[1:]...)
 
-	return osutil.Command("docker", dockerArgs...)
+	return osutil.Command("docker", dockerArgs...)//실행할 명령어 완성
 }
 
 //count argument takes priority, otherwise timeout
