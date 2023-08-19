@@ -1,0 +1,4 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+symlink(&(0x7f0000000000)='file7\x00', &(0x7f0000000006)='test_file_eloop2\x00')
+symlink(&(0x7f0000000017)='test_file_eloop2\x00', &(0x7f0000000028)='file7\x00')
+creat(&(0x7f000000002e)='file7\x00', 0x124)

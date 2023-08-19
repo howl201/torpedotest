@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"os"
 	"strings"
 	"time"
 
@@ -31,19 +32,23 @@ type checkArgs struct {
 	featureFlags   map[string]csource.Feature
 }
 
+//changed this to not crash if the manager isn't reachable for testing purposes
 func testImage(hostAddr string, args *checkArgs) {
-	log.Logf(0, "connecting to host at %v", hostAddr)
-	conn, err := rpctype.Dial(hostAddr)
-	if err != nil {
-		log.Fatalf("BUG: failed to connect to host: %v", err)
-	}
-	conn.Close()
+	log.Logf(0, "skipping host connect test")
+	//log.Logf(0, "connecting to host at %v", hostAddr)
+	//conn, err := rpctype.Dial(hostAddr)
+	//if err != nil {
+	//	log.Logf(1, "BUG: failed to connect to host: %v", err)
+	//} else {
+	//	_ = conn.Close()
+	//}
 	if _, err := checkMachine(args); err != nil {
 		log.Fatalf("BUG: %v", err)
 	}
 }
 
 func runTest(target *prog.Target, manager *rpctype.RPCClient, name, executor string) {
+	log.Logf(1, "beginning test")
 	pollReq := &rpctype.RunTestPollReq{Name: name}
 	for {
 		req := new(rpctype.RunTestPollRes)
@@ -55,7 +60,7 @@ func runTest(target *prog.Target, manager *rpctype.RPCClient, name, executor str
 		}
 		test := convertTestReq(target, req)
 		if test.Err == nil {
-			runtest.RunTest(test, executor)
+			runTest(target, manager, name, executor)
 		}
 		reply := &rpctype.RunTestDoneArgs{
 			Name:   name,
@@ -144,9 +149,17 @@ func checkMachine(args *checkArgs) (*rpctype.CheckArgs, error) {
 		args.ipcConfig.Flags&ipc.FlagSandboxAndroid != 0 {
 		return nil, fmt.Errorf("sandbox=android is not supported (%v)", feat.Reason)
 	}
-	if err := checkSimpleProgram(args, features); err != nil {
+	//if err := checkSimpleProgram(args, features); err != nil {
+	//	return nil, err
+	//}
+	if err := checkSimpleContainerProgram(args); err != nil {
 		return nil, err
 	}
+	log.Logf(1, "no problem checking simple program")
+
+	//log.Logf(1, "now testing kthreadd smash functionality")
+	//testSmash(args)
+
 	return checkCalls(args, features)
 }
 
@@ -192,11 +205,12 @@ func checkCalls(args *checkArgs, features *host.Features) (*rpctype.CheckArgs, e
 	return res, nil
 }
 
+//FIXME using executor direct command here
 func checkRevisions(args *checkArgs) error {
 	log.Logf(0, "checking revisions...")
 	executorArgs := strings.Split(args.ipcConfig.Executor, " ")
 	executorArgs = append(executorArgs, "version")
-	cmd := osutil.Command(executorArgs[0], executorArgs[1:]...)
+	cmd := ipc.MakeExecutorCommand(executorArgs)
 	cmd.Stderr = ioutil.Discard
 	if _, err := cmd.StdinPipe(); err != nil { // for the case executor is wrapped with ssh
 		return err
@@ -213,6 +227,10 @@ func checkRevisions(args *checkArgs) error {
 		return fmt.Errorf("mismatching target/executor arches: %v vs %v", args.target.Arch, vers[1])
 	}
 	if prog.GitRevision != vers[3] {
+		if prog.GitRevision == "" {
+			log.Logf(1, "prog has no git revision, assume this is built for debugging purposes")
+			return nil
+		}
 		return fmt.Errorf("mismatching fuzzer/executor git revisions: %v vs %v",
 			prog.GitRevision, vers[3])
 	}
@@ -233,9 +251,10 @@ func checkRevisions(args *checkArgs) error {
 
 func checkSimpleProgram(args *checkArgs, features *host.Features) error {
 	log.Logf(0, "testing simple program...")
-	if err := host.Setup(args.target, features, args.featureFlags, args.ipcConfig.Executor); err != nil {
-		return fmt.Errorf("host setup failed: %v", err)
-	}
+	//commented out host setup, since this is useless in a containerized environment
+	//if err := host.Setup(args.target, features, args.featureFlags, args.ipcConfig.Executor); err != nil {
+	//	return fmt.Errorf("host setup failed: %v", err)
+	//}
 	env, err := ipc.MakeEnv(args.ipcConfig, 0)
 	if err != nil {
 		return fmt.Errorf("failed to create ipc env: %v", err)
@@ -243,6 +262,61 @@ func checkSimpleProgram(args *checkArgs, features *host.Features) error {
 	defer env.Close()
 	p := args.target.DataMmapProg()
 	output, info, hanged, err := env.Exec(args.ipcExecOpts, p)
+	if err != nil {
+		return fmt.Errorf("program execution failed: %v\n%s", err, output)
+	}
+	if hanged {
+		return fmt.Errorf("program hanged:\n%s", output)
+	}
+	if len(info.Calls) == 0 {
+		return fmt.Errorf("no calls executed:\n%s", output)
+	}
+	if info.Calls[0].Errno != 0 {
+		return fmt.Errorf("simple call failed: %+v\n%s", info.Calls[0], output)
+	}
+	if args.ipcConfig.Flags&ipc.FlagSignal != 0 && len(info.Calls[0].Signal) < 2 {
+		return fmt.Errorf("got no coverage:\n%s", output)
+	}
+	if len(info.Calls[0].Signal) < 1 {
+		return fmt.Errorf("got no fallback coverage:\n%s", output)
+	}
+	return nil
+}
+
+func checkSimpleContainerProgram(args *checkArgs) error {
+	log.Logf(0, "testing simple program in container...")
+	env, err := ipc.MakeEnv(args.ipcConfig, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create ipc env: %v", err)
+	}
+	defer env.Close()
+	p := args.target.DataMmapProg()
+
+	log.Logf(3, "running program:\n %s", string(p.Serialize()))
+
+	r := &ipc.ContainerRestrictions{
+		Cores: "0",
+		Usage: 1.0,
+		Count: 100,
+	}
+	beforeReport, _ := ipc.GetCPUReport()
+	output, info, hanged, err := env.ExecOnCore(args.ipcExecOpts, p, r)
+	afterReport, _ := ipc.GetCPUReport()
+
+	usage, _ := ipc.GetUsageOfCore(beforeReport, afterReport, 0)
+	ipc.DisplayCPUUsage(beforeReport, afterReport, os.Stdout)
+	log.Logf(0, "CPU usage of core 0 was %0.2f percent, limiting rerun to %0.2f percent", usage*100, usage*50)
+
+	r = &ipc.ContainerRestrictions{
+		Cores: "0",
+		Usage: usage / 2,
+		Count: 100,
+	}
+	beforeReport, _ = ipc.GetCPUReport()
+	output, info, hanged, err = env.ExecOnCore(args.ipcExecOpts, p, r)
+	afterReport, _ = ipc.GetCPUReport()
+	ipc.DisplayCPUUsage(beforeReport, afterReport, os.Stdout)
+
 	if err != nil {
 		return fmt.Errorf("program execution failed: %v\n%s", err, output)
 	}

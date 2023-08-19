@@ -1,0 +1,6 @@
+FROM ubuntu:focal
+
+COPY idle .
+
+# pass along command line args
+ENTRYPOINT ["/idle"]

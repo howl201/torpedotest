@@ -1,0 +1,16 @@
+{
+  "name": "docker",
+  "target": "linux/amd64",
+  "http": ":12345",
+  "workdir": "/home/cnslab/torpedo/workdir",
+  "runtime": "runc",
+  "capabilities": "UNCONFINED",
+  "syzkaller": "/home/cnslab/torpedo",
+  "cover": false,
+  "disable_syscalls": ["syz_genetlink_get_family_id", "fsync", "sync", "fdatasync", "socket", "socketpair"],
+  "procs": 1,
+  "type": "docker",
+  "vm": {
+    "count": 1
+  }
+}

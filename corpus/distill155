@@ -1,0 +1,6 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+open(&(0x7f0000000000)='./tfile_5046\x00', 0x41, 0x1b6)
+chmod(&(0x7f000000000d)='./tfile_5046\x00', 0x1c0)
+utimensat(0xffffffffffffff9c, &(0x7f000000001a)='./tfile_5046\x00', &(0x7f0000000000), 0x0)
+rename(&(0x7f0000000027)='./tfile_5046\x00', &(0x7f0000000034)='abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstmnopqrstuvwxyzabcdefghijklmnopqrstmnopqrstuvwxyzabcdefghijklmnopqrstmnopqrstuvwxyzabcdefghijklmnopqrstmnopqrstuvwxyzabcdefghijklmnopqrstmnopqrstuvwxyzabcdefghijklmnopqrstmnopqrstuvwxyz\x00')
+rename(&(0x7f0000000135)='./tfile_5046\x00', &(0x7f0000000142)='./rndir_5046/rnfile_5046\x00')

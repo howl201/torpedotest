@@ -6,12 +6,14 @@ package ipc
 import (
 	"encoding/binary"
 	"fmt"
+	"github.com/google/syzkaller/pkg/log"
 	"io"
 	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -21,7 +23,6 @@ import (
 	"github.com/google/syzkaller/pkg/osutil"
 	"github.com/google/syzkaller/pkg/signal"
 	"github.com/google/syzkaller/prog"
-	"github.com/google/syzkaller/sys/targets"
 )
 
 // Configuration flags for Config.Flags.
@@ -248,6 +249,22 @@ var rateLimit = time.NewTicker(1 * time.Second)
 // info: per-call info
 // hanged: program hanged and was killed
 // err0: failed to start the process or bug in executor itself
+func (env *Env) ExecOnCore(opts *ExecOpts, p *prog.Prog, r *ContainerRestrictions) (output []byte, info *ProgInfo, hanged bool, err0 error) {
+	if env.cmd == nil {
+		if r == nil {
+			r = &ContainerRestrictions{
+				Cores: strconv.Itoa(env.pid),
+				Usage: 1.0,
+				Count: 1,
+			}
+		}
+		tmpDirPath := "./"
+		atomic.AddUint64(&env.StatRestarts, 1)
+		env.cmd, _ = makeContainerCommand(env.pid, env.bin, env.config, env.inFile, env.outFile, env.out, tmpDirPath, *r)
+	}
+	return env.Exec(opts, p)
+}
+
 func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInfo, hanged bool, err0 error) {
 	// Copy-in serialized program.
 	progSize, err := p.SerializeForExec(env.in)
@@ -255,10 +272,9 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInf
 		err0 = fmt.Errorf("failed to serialize: %v", err)
 		return
 	}
-	var progData []byte
-	if !env.config.UseShmem {
-		progData = env.in[:progSize]
-	}
+	//can't use shmem
+	var progData = env.in[:progSize]
+
 	// Zero out the first two words (ncmd and nsig), so that we don't have garbage there
 	// if executor crashes before writing non-garbage there.
 	for i := 0; i < 4; i++ {
@@ -267,26 +283,26 @@ func (env *Env) Exec(opts *ExecOpts, p *prog.Prog) (output []byte, info *ProgInf
 
 	atomic.AddUint64(&env.StatExecs, 1)
 	if env.cmd == nil {
-		if p.Target.OS != "test" && targets.Get(p.Target.OS, p.Target.Arch).HostFuzzer {
-			// The executor is actually ssh,
-			// starting them too frequently leads to timeouts.
-			<-rateLimit.C
-		}
 		tmpDirPath := "./"
 		atomic.AddUint64(&env.StatRestarts, 1)
+		//make the command
 		env.cmd, err0 = makeCommand(env.pid, env.bin, env.config, env.inFile, env.outFile, env.out, tmpDirPath)
-		if err0 != nil {
-			return
-		}
 	}
+
 	output, hanged, err0 = env.cmd.exec(opts, progData)
 	if err0 != nil {
+		log.Logf(1, "cmd exec failed")
 		env.cmd.close()
 		env.cmd = nil
 		return
 	}
 
+	//TODO this is where they try to read the information back from shared memory. Might need to hack this so it reads
+	// from the output pipe from the container
 	info, err0 = env.parseOutput(p)
+	if err0 != nil {
+		log.Logf(1, "Error parsing output: %v", err0)
+	}
 	if info != nil && env.config.Flags&FlagSignal == 0 {
 		addFallbackSignal(p, info)
 	}
@@ -620,6 +636,7 @@ func makeCommand(pid int, bin []string, config *Config, inFile, outFile *os.File
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start executor binary: %v", err)
 	}
+	log.Logf(1, "newly started executor has PID %d", cmd.Process.Pid)
 	c.cmd = cmd
 	wp.Close()
 	// Note: we explicitly close inwp before calling handshake even though we defer it above.
@@ -629,6 +646,7 @@ func makeCommand(pid int, bin []string, config *Config, inFile, outFile *os.File
 
 	if c.config.UseForkServer {
 		if err := c.handshake(); err != nil {
+			log.Logf(1, "Handshake error on PID %d: %v", c.pid, err)
 			return nil, err
 		}
 	}

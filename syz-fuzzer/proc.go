@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"runtime/debug"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -23,9 +24,15 @@ import (
 )
 
 // Proc represents a single fuzzing process (executor).
+//FIXME added a waitgroup, a mutex, a last info, and a stop timestamp
 type Proc struct {
 	fuzzer            *Fuzzer
 	pid               int
+	observer          *sync.WaitGroup
+	procGroup         *sync.WaitGroup
+	stopTimestamp     int64
+	lastInfo          chan *ipc.ProgInfo
+	programSelector   chan interface{}
 	env               *ipc.Env
 	rnd               *rand.Rand
 	execOpts          *ipc.ExecOpts
@@ -34,7 +41,7 @@ type Proc struct {
 	execOptsNoCollide *ipc.ExecOpts
 }
 
-func newProc(fuzzer *Fuzzer, pid int) (*Proc, error) {
+func newProc(fuzzer *Fuzzer, pid int, observer *sync.WaitGroup, procGroup *sync.WaitGroup) (*Proc, error) {
 	env, err := ipc.MakeEnv(fuzzer.config, pid)
 	if err != nil {
 		return nil, err
@@ -51,6 +58,10 @@ func newProc(fuzzer *Fuzzer, pid int) (*Proc, error) {
 		pid:               pid,
 		env:               env,
 		rnd:               rnd,
+		observer:          observer,
+		procGroup:         procGroup,
+		lastInfo:          make(chan *ipc.ProgInfo),
+		programSelector:   make(chan interface{}, 1),
 		execOpts:          fuzzer.execOpts,
 		execOptsCover:     &execOptsCover,
 		execOptsComps:     &execOptsComps,
@@ -74,8 +85,10 @@ func (proc *Proc) loop() {
 				proc.triageInput(item)
 			case *WorkCandidate:
 				proc.execute(proc.execOpts, item.p, item.flags, StatCandidate)
-			case *WorkSmash:
-				proc.smashInput(item)
+			//case *WorkSmash:
+			//	//proc.smashInput(item)
+			//	//proc.smashByKernelTime(item)
+			//	proc.smashByKthreadD(item)
 			default:
 				log.Fatalf("unknown work type: %#v", item)
 			}
@@ -151,6 +164,8 @@ func (proc *Proc) triageInput(item *WorkTriage) {
 						continue
 					}
 					thisSignal, _ := getSignalAndCover(p1, info, call1)
+					//if the intersection of newsignal and the current run is the same as the new signal...
+					//meaning that the current is GEQ the current signal, or that the signal didn't decrease
 					if newSignal.Intersection(thisSignal).Len() == newSignal.Len() {
 						return true
 					}
@@ -173,7 +188,10 @@ func (proc *Proc) triageInput(item *WorkTriage) {
 	proc.fuzzer.addInputToCorpus(item.p, inputSignal, sig)
 
 	if item.flags&ProgSmashed == 0 {
-		proc.fuzzer.workQueue.enqueue(&WorkSmash{item.p, item.call})
+		proc.fuzzer.workQueue.enqueue(&WorkSmash{
+			p:    item.p,
+			call: item.call,
+		})
 	}
 }
 
@@ -277,11 +295,6 @@ func (proc *Proc) executeRaw(opts *ipc.ExecOpts, p *prog.Prog, stat Stat) *ipc.P
 	if opts.Flags&ipc.FlagDedupCover == 0 {
 		log.Fatalf("dedup cover is not enabled")
 	}
-	for _, call := range p.Calls {
-		if !proc.fuzzer.choiceTable.Enabled(call.Meta.ID) {
-			panic(fmt.Sprintf("executing disabled syscall %v", call.Meta.Name))
-		}
-	}
 
 	// Limit concurrency window and do leak checking once in a while.
 	ticket := proc.fuzzer.gate.Enter()
@@ -290,7 +303,9 @@ func (proc *Proc) executeRaw(opts *ipc.ExecOpts, p *prog.Prog, stat Stat) *ipc.P
 	proc.logProgram(opts, p)
 	for try := 0; ; try++ {
 		atomic.AddUint64(&proc.fuzzer.stats[stat], 1)
+
 		output, info, hanged, err := proc.env.Exec(opts, p)
+
 		if err != nil {
 			if try > 10 {
 				log.Fatalf("executor %v failed %v times:\n%v", proc.pid, try, err)

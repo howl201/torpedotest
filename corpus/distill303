@@ -1,0 +1,5 @@
+mmap(&(0x7f0000000000/0x1000)=nil, 0x1000, 0x3, 0x32, 0xffffffffffffffff, 0x0)
+creat(&(0x7f0000000000)='creat01.3926\x00', 0x1a4)
+stat(&(0x7f000000000d)='creat01.3926\x00', &(0x7f000000001a))
+r0 = creat(&(0x7f000000005e)='creat01.3926\x00', 0x124)
+close(r0)

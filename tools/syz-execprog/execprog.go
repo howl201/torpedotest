@@ -9,9 +9,11 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"github.com/kent007/linux-inspect/top"
 	"io/ioutil"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"time"
 
@@ -27,17 +29,28 @@ import (
 )
 
 var (
-	flagOS        = flag.String("os", runtime.GOOS, "target os")
-	flagArch      = flag.String("arch", runtime.GOARCH, "target arch")
-	flagCoverFile = flag.String("coverfile", "", "write coverage to the file")
-	flagRepeat    = flag.Int("repeat", 1, "repeat execution that many times (0 for infinite loop)")
-	flagProcs     = flag.Int("procs", 1, "number of parallel processes to execute programs")
-	flagOutput    = flag.Bool("output", false, "write programs and results to stdout")
-	flagHints     = flag.Bool("hints", false, "do a hints-generation run")
-	flagFaultCall = flag.Int("fault_call", -1, "inject fault into this call (0-based)")
-	flagFaultNth  = flag.Int("fault_nth", 0, "inject fault on n-th operation (0-based)")
-	flagEnable    = flag.String("enable", "none", "enable only listed additional features")
-	flagDisable   = flag.String("disable", "none", "enable all additional features except listed")
+	flagOS           = flag.String("os", runtime.GOOS, "target os")
+	flagArch         = flag.String("arch", runtime.GOARCH, "target arch")
+	flagCoverFile    = flag.String("coverfile", "", "write coverage to the file")
+	flagRepeat       = flag.Int("repeat", 1, "repeat execution that many times (-1 for infinite loop)")
+	flagProcs        = flag.Int("procs", 1, "number of parallel processes to execute programs")
+	flagOutput       = flag.Bool("output", false, "write programs and results to stdout")
+	flagHints        = flag.Bool("hints", false, "do a hints-generation run")
+	flagFaultCall    = flag.Int("fault_call", -1, "inject fault into this call (0-based)")
+	flagFaultNth     = flag.Int("fault_nth", 0, "inject fault on n-th operation (0-based)")
+	flagEnable       = flag.String("enable", "none", "enable only listed additional features")
+	flagDisable      = flag.String("disable", "none", "enable all additional features except listed")
+	flagContainer    = flag.Bool("container", false, "run the executor in a container")
+	flagRuntime      = flag.String("runtime", "", "use this runtime for the container")
+	flagTimeout      = flag.Int("seconds", ROUNDDURATION, "specify a timeout in seconds for the execution")
+	flagCount        = flag.Int("count", 0, "number of times to run the containerized program")
+	flagCapabilities = flag.String("caps", "", "capability to add to the container")
+)
+
+const (
+	TOPINTERVAL   = 4
+	KTHREADD      = 2
+	ROUNDDURATION = 5
 )
 
 func main() {
@@ -74,8 +87,10 @@ func main() {
 		}
 	}
 	config, execOpts := createConfig(target, features, featuresFlags)
-	if err = host.Setup(target, features, featuresFlags, config.Executor); err != nil {
-		log.Fatal(err)
+	if !*flagContainer {
+		if err = host.Setup(target, features, featuresFlags, config.Executor); err != nil {
+			log.Fatal(err)
+		}
 	}
 	var gateCallback func()
 	if features[host.FeatureLeak].Enabled {
@@ -95,17 +110,29 @@ func main() {
 		shutdown: make(chan struct{}),
 		repeat:   *flagRepeat,
 	}
+	results := make(chan *roundReport, 1)
+	categories := []string{"ksoftirq", "kworker", "dockerd", "containerd", "kaudit", "auditd", "systemd-journal",
+		"runsc", "exe"}
 	var wg sync.WaitGroup
 	wg.Add(*flagProcs)
-	for p := 0; p < *flagProcs; p++ {
-		pid := p
-		go func() {
-			defer wg.Done()
-			ctx.run(pid)
-		}()
+	for i := *flagRepeat; i != 0; i-- {
+		for p := 0; p < *flagProcs; p++ {
+			pid := p
+			go func() {
+				defer wg.Done()
+				ctx.run(pid)
+			}()
+		}
+		osutil.HandleInterrupts(ctx.shutdown)
+		topDuration := time.Duration(*flagTimeout)*time.Second - time.Second + 300*time.Millisecond
+		topStop := time.Now().Add(topDuration).UnixNano()
+		go observeRound(topStop, categories, results)
+		wg.Wait()
+		report := <-results
+		log.Logf(1, "usages: %+v", report.usages)
+		ipc.DisplayCPUUsage(report.before, report.after, os.Stdout)
+		wg.Add(*flagProcs)
 	}
-	osutil.HandleInterrupts(ctx.shutdown)
-	wg.Wait()
 }
 
 type Context struct {
@@ -127,19 +154,17 @@ func (ctx *Context) run(pid int) {
 		log.Fatalf("failed to create ipc env: %v", err)
 	}
 	defer env.Close()
-	for {
-		select {
-		case <-ctx.shutdown:
-			return
-		default:
-		}
-		idx := ctx.getProgramIndex()
-		if ctx.repeat > 0 && idx >= len(ctx.entries)*ctx.repeat {
-			return
-		}
-		entry := ctx.entries[idx%len(ctx.entries)]
-		ctx.execute(pid, env, entry)
+	select {
+	case <-ctx.shutdown:
+		return
+	default:
 	}
+	idx := ctx.getProgramIndex()
+	if ctx.repeat > 0 && idx >= len(ctx.entries)*ctx.repeat {
+		return
+	}
+	entry := ctx.entries[idx%len(ctx.entries)]
+	ctx.execute(pid, env, entry)
 }
 
 func (ctx *Context) execute(pid int, env *ipc.Env, entry *prog.LogEntry) {
@@ -158,7 +183,27 @@ func (ctx *Context) execute(pid int, env *ipc.Env, entry *prog.LogEntry) {
 	if *flagOutput {
 		ctx.logProgram(pid, entry.P, callOpts)
 	}
-	output, info, hanged, err := env.Exec(callOpts, entry.P)
+	var output []byte
+	var info *ipc.ProgInfo
+	var hanged bool
+	var err error
+	if *flagContainer {
+		duration := time.Duration(*flagTimeout) * time.Second
+		stop := time.Now().Add(duration).UnixNano()
+		// count has priority over stop, if given
+		r := &ipc.ContainerRestrictions{
+			Cores:         strconv.Itoa(pid),
+			Usage:         1.0,
+			Count:         uint64(*flagCount),
+			StopTimestamp: stop,
+			Runtime:       *flagRuntime,
+			Capabilities:  *flagCapabilities,
+		}
+		output, info, hanged, err = env.ExecOnCore(callOpts, entry.P, r)
+
+	} else {
+		output, info, hanged, err = env.Exec(callOpts, entry.P)
+	}
 	if ctx.config.Flags&ipc.FlagDebug != 0 || err != nil {
 		log.Logf(0, "result: hanged=%v err=%v\n\n%s", hanged, err, output)
 	}
@@ -286,6 +331,9 @@ func createConfig(target *prog.Target,
 	features *host.Features, featuresFlags csource.Features) (
 	*ipc.Config, *ipc.ExecOpts) {
 	config, execOpts, err := ipcconfig.Default(target)
+	if *flagContainer {
+		config.UseShmem = false
+	}
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -330,4 +378,39 @@ func createConfig(target *prog.Target,
 		config.Flags |= ipc.FlagEnableDevlinkPCI
 	}
 	return config, execOpts
+}
+
+//used to transmit information about the round between the TOP routine and the observer
+type roundReport struct {
+	before *ipc.CPUReport
+	usages map[string]float64
+	after  *ipc.CPUReport
+}
+
+//observe one round until the stop timestamp and report the results
+func observeRound(stopTimestamp int64, categories []string, results chan *roundReport) {
+
+	before, _ := ipc.GetCPUReport()
+	output, _ := top.GetTimed(top.DefaultExecPath, 0, stopTimestamp, TOPINTERVAL)
+	after, _ := ipc.GetCPUReport()
+	rows, iterations, _ := top.Parse(output)
+
+	//round up some miscellaneous PIDs from children of kthreadd that aren't running as workers
+	miscKernelPIDS, _ := ipc.GetChildrenOfPID(KTHREADD)
+	usage := ipc.GetUsageOfProcs(rows, miscKernelPIDS, categories)
+
+	//divide out the totals to get averages across the period
+	for k, v := range usage {
+		usage[k] = v / float64(iterations)
+	}
+
+	//currently for debug purposes
+	//observerLog.WriteString(output)
+
+	log.Logf(4, "Observer took %d top measurements", iterations)
+	results <- &roundReport{
+		before: before,
+		usages: usage,
+		after:  after,
+	}
 }
